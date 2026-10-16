@@ -27,16 +27,19 @@ class MainActivity : Activity() {
     private lateinit var progressLabel: TextView
     private lateinit var searchSection: LinearLayout
     private lateinit var resultsBadge: TextView
-    private val results = ArrayList<String>()
-    private lateinit var adapter: ArrayAdapter<String>
+    private lateinit var resultsList: LinearLayout
     @Volatile private var token = 0
-    private val maxResults = 3000
+    private val maxResults = 1500
 
     private val bg = Color.parseColor("#0A0A0A")
     private val card = Color.parseColor("#161616")
     private val accent = Color.parseColor("#F2F2F2")
     private val dim = Color.parseColor("#8A8A8A")
     private val ok = Color.parseColor("#6FE08A")
+    private val warn = Color.parseColor("#E05C5C")
+    private val warnBg = Color.parseColor("#2A1414")
+
+    private val flagKeywords = listOf("hologram", "xit", "zit", "b13", "esp", "localconfig", "aim")
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -136,7 +139,7 @@ class MainActivity : Activity() {
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             background = GradientDrawable().apply { setColor(card); cornerRadius = 20f }
             setPadding(28, 24, 28, 24)
-            setOnEditorActionListener { _, _, _ -> startSearch(); true }
+            setOnEditorActionListener { _, _, _ -> startSearch(input.text.toString().trim(), false); true }
         }
         searchSection.addView(input)
         searchSection.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 16) })
@@ -144,11 +147,11 @@ class MainActivity : Activity() {
             text = "SEARCH"
             setTextColor(Color.BLACK)
             background = GradientDrawable().apply { setColor(accent); cornerRadius = 20f }
-            setOnClickListener { startSearch() }
+            setOnClickListener { startSearch(input.text.toString().trim(), false) }
         })
         val statusRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(4, 20, 4, 8) }
         status = TextView(this).apply {
-            setTextColor(dim); text = "Ready to search"
+            setTextColor(dim); text = "Scanning for flagged items..."
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         resultsBadge = TextView(this).apply {
@@ -158,8 +161,8 @@ class MainActivity : Activity() {
         }
         statusRow.addView(status); statusRow.addView(resultsBadge)
         searchSection.addView(statusRow)
-        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, results)
-        searchSection.addView(ListView(this).apply { this.adapter = this@MainActivity.adapter })
+        resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        searchSection.addView(resultsList)
         root.addView(searchSection)
 
         val scroll = ScrollView(this).apply { addView(root) }
@@ -176,6 +179,8 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
         else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
 
+    private var autoScanDone = false
+
     private fun refreshPermissionUi() {
         if (hasPermission()) {
             progressBar.progress = 1; progressLabel.text = "1 / 1"
@@ -186,6 +191,7 @@ class MainActivity : Activity() {
                     duration = 450; interpolator = AccelerateDecelerateInterpolator(); start()
                 }
             }
+            if (!autoScanDone) { autoScanDone = true; startSearch(null, true) }
         } else {
             progressBar.progress = 0; progressLabel.text = "0 / 1"
             permCard.visibility = View.VISIBLE
@@ -210,54 +216,106 @@ class MainActivity : Activity() {
         refreshPermissionUi()
     }
 
-    private fun startSearch() {
-        val q = input.text.toString().trim()
-        if (q.isEmpty()) return
+    private fun addResultCard(text: String, flagged: Boolean) {
+        val row = TextView(this).apply {
+            this.text = text
+            setTextColor(if (flagged) warn else Color.WHITE)
+            textSize = 13f
+            setPadding(24, 20, 24, 20)
+            background = GradientDrawable().apply {
+                setColor(if (flagged) warnBg else card)
+                cornerRadius = 16f
+            }
+        }
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(0, 0, 0, 12)
+        resultsList.addView(row, lp)
+    }
+
+    private fun startSearch(customQuery: String?, isAutoFlagScan: Boolean) {
+        if (!isAutoFlagScan && customQuery.isNullOrEmpty()) return
         if (!hasPermission()) { ensurePermission(); return }
         val my = ++token
-        results.clear(); adapter.notifyDataSetChanged()
-        status.text = "Searching..."
+        resultsList.removeAllViews()
+        status.text = if (isAutoFlagScan) "Scanning for flagged items..." else "Searching..."
         resultsBadge.visibility = View.GONE
         Thread {
-            val found = ArrayList<String>()
-            if (Build.VERSION.SDK_INT >= 30) try {
+            val flagged = ArrayList<String>()
+            val custom = ArrayList<String>()
+
+            // MediaStore trash pass (only useful for custom query or general flag scan)
+            if (Build.VERSION.SDK_INT >= 30 && !isAutoFlagScan && customQuery != null) try {
                 val args = Bundle().apply {
                     putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?")
-                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("%$q%"))
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("%$customQuery%"))
                     putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
                 }
                 contentResolver.query(MediaStore.Files.getContentUri("external"),
                     arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.IS_TRASHED), args, null)?.use { c ->
-                    while (c.moveToNext() && found.size < maxResults) {
+                    while (c.moveToNext() && custom.size < maxResults) {
                         val p = c.getString(0) ?: continue
-                        found.add(if (c.getInt(1) == 1) "🗑️ [DELETED] $p" else p)
+                        custom.add(if (c.getInt(1) == 1) "🗑️ [DELETED] $p" else "📄 $p")
                     }
                 }
             } catch (_: Exception) {}
-            val seen = HashSet<String>(found.map { it.substringAfter("] ") })
+
+            val seen = HashSet<String>()
             val stack = ArrayDeque<File>()
             stack.add(Environment.getExternalStorageDirectory())
-            while (stack.isNotEmpty() && found.size < maxResults && my == token) {
+            while (stack.isNotEmpty() && my == token && (flagged.size + custom.size) < maxResults) {
                 val dir = stack.removeLast()
                 val kids = try { dir.listFiles() } catch (_: Exception) { null } ?: continue
                 for (f in kids) {
                     val n = f.name
-                    if (n.contains(q, ignoreCase = true) && seen.add(f.absolutePath)) {
-                        val low = f.absolutePath.lowercase()
-                        val deleted = n.startsWith(".trashed") || low.contains("/.trash") ||
-                            low.contains("/recycle") || low.contains("/.recently-deleted")
-                        val tag = if (deleted) "🗑️ [DELETED] " else if (f.isDirectory) "📁 " else "📄 "
-                        found.add(tag + f.absolutePath)
+                    val low = n.lowercase()
+                    if (seen.add(f.absolutePath)) {
+                        val isFlag = flagKeywords.any { low.contains(it) }
+                        if (isFlag) flagged.add((if (f.isDirectory) "📁 " else "📄 ") + f.absolutePath)
+                        if (!isAutoFlagScan && customQuery != null && low.contains(customQuery.lowercase())) {
+                            val deletedLow = f.absolutePath.lowercase()
+                            val deleted = n.startsWith(".trashed") || deletedLow.contains("/.trash") ||
+                                deletedLow.contains("/recycle") || deletedLow.contains("/.recently-deleted")
+                            val tag = if (deleted) "🗑️ [DELETED] " else if (f.isDirectory) "📁 " else "📄 "
+                            custom.add(tag + f.absolutePath)
+                        }
                     }
                     if (f.isDirectory) stack.add(f)
                 }
             }
             runOnUiThread {
                 if (my != token) return@runOnUiThread
-                results.addAll(found); adapter.notifyDataSetChanged()
-                status.text = if (found.isEmpty()) "No matches found" else "Search complete"
-                resultsBadge.text = "${found.size}" + if (found.size >= maxResults) "+" else ""
-                resultsBadge.visibility = View.VISIBLE
+                if (flagged.isNotEmpty()) {
+                    val header = TextView(this).apply {
+                        text = "⚠ FLAGGED (${flagged.size})"
+                        setTextColor(warn); textSize = 13f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        setPadding(4, 8, 4, 12)
+                    }
+                    resultsList.addView(header)
+                    flagged.forEach { addResultCard(it, true) }
+                }
+                if (!isAutoFlagScan) {
+                    if (custom.isNotEmpty()) {
+                        val header = TextView(this).apply {
+                            text = "RESULTS (${custom.size})"
+                            setTextColor(dim); textSize = 13f
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                            setPadding(4, 16, 4, 12)
+                        }
+                        resultsList.addView(header)
+                        custom.forEach { addResultCard(it, false) }
+                    }
+                    status.text = if (custom.isEmpty()) "No matches found" else "Search complete"
+                    resultsBadge.text = "${custom.size}" + if (custom.size >= maxResults) "+" else ""
+                    resultsBadge.visibility = View.VISIBLE
+                } else {
+                    status.text = if (flagged.isEmpty()) "No flagged items found" else "Flag scan complete — review above"
+                    if (flagged.isNotEmpty()) {
+                        resultsBadge.text = "${flagged.size}"
+                        resultsBadge.background = GradientDrawable().apply { setColor(warn); cornerRadius = 100f }
+                        resultsBadge.visibility = View.VISIBLE
+                    }
+                }
             }
         }.start()
     }
