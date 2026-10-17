@@ -42,14 +42,16 @@ class MainActivity : Activity() {
     private var dotsHandler: Handler? = null
     private var dotsRunnable: Runnable? = null
 
-    private val bg = Color.parseColor("#0A0A0A")
-    private val card = Color.parseColor("#161616")
+    private val bg = Color.parseColor("#07080A")
+    private val glassFill = Color.parseColor("#26FFFFFF")
+    private val glassFillSoft = Color.parseColor("#14FFFFFF")
+    private val glassStroke = Color.parseColor("#40FFFFFF")
     private val accent = Color.parseColor("#F2F2F2")
-    private val dim = Color.parseColor("#8A8A8A")
+    private val dim = Color.parseColor("#9AA0A6")
     private val ok = Color.parseColor("#6FE08A")
-    private val okBg = Color.parseColor("#123420")
+    private val okGlass = Color.parseColor("#406FE08A")
     private val warn = Color.parseColor("#E05C5C")
-    private val warnBg = Color.parseColor("#2A1414")
+    private val warnGlass = Color.parseColor("#40E05C5C")
 
     private val flagKeywords = listOf(
         "hologram", "xit", "zit", "b13", "esp", "localconfig", "aim",
@@ -58,11 +60,25 @@ class MainActivity : Activity() {
         "speedhack", "bypass", "triggerbot"
     )
 
+    private fun glassBg(fill: Int = glassFill, radius: Float = 28f, strokeColor: Int = glassStroke): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = radius
+            setStroke(2, strokeColor)
+        }
+    }
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+
+        val backdrop = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.parseColor("#141821"), Color.parseColor("#07080A"), Color.parseColor("#0A0506"))
+        )
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
+            background = backdrop
             setPadding(48, 120, 48, 48)
         }
 
@@ -70,11 +86,7 @@ class MainActivity : Activity() {
             text = "🛡️"
             textSize = 46f
             gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(card)
-                setStroke(3, Color.parseColor("#2A2A2A"))
-            }
+            background = glassBg(glassFillSoft, 110f, glassStroke)
         }
         logoWrap = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(220, 220).apply { gravity = Gravity.CENTER }
@@ -91,7 +103,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            letterSpacing = 0.04f
+            letterSpacing = 0.05f
         })
         root.addView(TextView(this).apply {
             text = "by Z1R0"
@@ -104,7 +116,7 @@ class MainActivity : Activity() {
         val progCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(36, 32, 36, 32)
-            background = GradientDrawable().apply { setColor(card); cornerRadius = 28f }
+            background = glassBg()
         }
         val progRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         progRow.addView(TextView(this).apply {
@@ -128,7 +140,7 @@ class MainActivity : Activity() {
         permCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(36, 32, 36, 32)
-            background = GradientDrawable().apply { setColor(card); cornerRadius = 28f }
+            background = glassBg()
         }
         permCard.addView(TextView(this).apply {
             text = "Storage Permission"
@@ -155,7 +167,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(36, 48, 36, 48)
-            background = GradientDrawable().apply { setColor(card); cornerRadius = 28f }
+            background = glassBg()
         }
         statusCardTitle = TextView(this).apply {
             text = "SCANNING"
@@ -179,7 +191,7 @@ class MainActivity : Activity() {
             setHintTextColor(dim); setTextColor(Color.WHITE)
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
-            background = GradientDrawable().apply { setColor(card); cornerRadius = 20f }
+            background = glassBg(glassFillSoft, 20f, glassStroke)
             setPadding(28, 24, 28, 24)
             setOnEditorActionListener { _, _, _ -> startFileSearch(input.text.toString().trim()); true }
         }
@@ -207,7 +219,7 @@ class MainActivity : Activity() {
         searchSection.addView(resultsList)
         root.addView(searchSection)
 
-        val scroll = ScrollView(this).apply { setBackgroundColor(bg); addView(root) }
+        val scroll = ScrollView(this).apply { background = backdrop; addView(root) }
         setContentView(scroll)
         window.decorView.setBackgroundColor(bg)
         refreshPermissionUi()
@@ -249,8 +261,8 @@ class MainActivity : Activity() {
 
     private fun startBreathe() {
         breatheAnimator?.cancel()
-        val sx = ObjectAnimator.ofFloat(logoWrap, "scaleX", 1f, 1.06f, 1f)
-        val sy = ObjectAnimator.ofFloat(logoWrap, "scaleY", 1f, 1.06f, 1f)
+        val sx = ObjectAnimator.ofFloat(logoWrap, "scaleX", 1f, 1.07f, 1f)
+        val sy = ObjectAnimator.ofFloat(logoWrap, "scaleY", 1f, 1.07f, 1f)
         sx.duration = 2200; sy.duration = 2200
         sx.repeatCount = ValueAnimator.INFINITE; sy.repeatCount = ValueAnimator.INFINITE
         sx.interpolator = AccelerateDecelerateInterpolator(); sy.interpolator = AccelerateDecelerateInterpolator()
@@ -327,23 +339,38 @@ class MainActivity : Activity() {
         refreshPermissionUi()
     }
 
-    private fun addResultCard(text: String, flagged: Boolean, delayMs: Long) {
-        val row = TextView(this).apply {
-            this.text = text
-            setTextColor(if (flagged) warn else Color.WHITE)
-            textSize = 13f
+    private fun addResultCard(path: String, flagged: Boolean, delayMs: Long) {
+        val timeStr = try {
+            val cleanPath = path.substringAfter("🗑️ [DELETED] ").substringAfter("📁 ").substringAfter("📄 ")
+            val f = File(cleanPath)
+            if (f.exists()) {
+                val sdf = java.text.SimpleDateFormat("MMM d, yyyy — HH:mm", java.util.Locale.getDefault())
+                "Last modified: " + sdf.format(java.util.Date(f.lastModified()))
+            } else "Last modified: unknown"
+        } catch (_: Exception) { "Last modified: unknown" }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(24, 20, 24, 20)
             alpha = 0f
             translationY = 20f
-            background = GradientDrawable().apply {
-                setColor(if (flagged) warnBg else card)
-                cornerRadius = 16f
-            }
+            background = glassBg(if (flagged) warnGlass else glassFillSoft, 16f, if (flagged) Color.parseColor("#60E05C5C") else glassStroke)
         }
+        container.addView(TextView(this).apply {
+            text = path
+            setTextColor(if (flagged) Color.parseColor("#FF9D9D") else Color.WHITE)
+            textSize = 13f
+        })
+        container.addView(TextView(this).apply {
+            text = timeStr
+            setTextColor(dim)
+            textSize = 11f
+            setPadding(0, 6, 0, 0)
+        })
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.setMargins(0, 0, 0, 12)
-        resultsList.addView(row, lp)
-        row.animate().alpha(1f).translationY(0f).setStartDelay(delayMs).setDuration(260).start()
+        resultsList.addView(container, lp)
+        container.animate().alpha(1f).translationY(0f).setStartDelay(delayMs).setDuration(260).start()
     }
 
     private fun addHeader(text: String, color: Int) {
@@ -357,9 +384,7 @@ class MainActivity : Activity() {
     private fun setStatusCard(clean: Boolean, count: Int) {
         stopScanningDots()
         statusCard.alpha = 0f
-        statusCard.background = GradientDrawable().apply {
-            setColor(if (clean) okBg else warnBg); cornerRadius = 28f
-        }
+        statusCard.background = glassBg(if (clean) okGlass else warnGlass, 28f, if (clean) Color.parseColor("#606FE08A") else Color.parseColor("#60E05C5C"))
         statusCardTitle.setTextColor(if (clean) ok else warn)
         statusCardTitle.text = if (clean) "✓ CLEAN" else "⚠ FLAGGED ($count)"
         statusCardSub.text = if (clean) "No cheat-related files or apps found"
