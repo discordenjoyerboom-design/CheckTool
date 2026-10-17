@@ -2,6 +2,7 @@ package com.z1r0.checktool
 
 import android.Manifest
 import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ContentResolver
 import android.content.Intent
@@ -15,6 +16,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.*
 import java.io.File
@@ -23,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var status: TextView
     private lateinit var permCard: LinearLayout
+    private lateinit var grantButton: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var progressLabel: TextView
     private lateinit var searchSection: LinearLayout
@@ -33,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var statusCardSub: TextView
     @Volatile private var token = 0
     private val maxResults = 1500
+    private var pulseAnimator: ObjectAnimator? = null
 
     private val bg = Color.parseColor("#0A0A0A")
     private val card = Color.parseColor("#161616")
@@ -110,7 +114,7 @@ class MainActivity : Activity() {
         progCard.addView(progRow)
         progCard.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 16) })
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 1; progress = 0
+            max = 100; progress = 0
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 14)
         }
         progCard.addView(progressBar)
@@ -131,18 +135,18 @@ class MainActivity : Activity() {
             text = "Needed to scan files and installed apps on your device"
             textSize = 13f; setTextColor(dim); setPadding(0, 6, 0, 24)
         })
-        permCard.addView(Button(this).apply {
+        grantButton = Button(this).apply {
             text = "GRANT"
             setTextColor(Color.BLACK)
             background = GradientDrawable().apply { setColor(accent); cornerRadius = 20f }
             setOnClickListener { ensurePermission() }
-        })
+        }
+        permCard.addView(grantButton)
         root.addView(permCard)
         root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 28) })
 
         searchSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE; alpha = 0f }
 
-        // Big status card
         statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -202,6 +206,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { addView(root) }
         setContentView(scroll)
         refreshPermissionUi()
+        startPulse()
     }
 
     override fun onResume() {
@@ -214,10 +219,40 @@ class MainActivity : Activity() {
         else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
 
     private var autoScanDone = false
+    private var wasGrantedBefore = false
+
+    private fun startPulse() {
+        pulseAnimator?.cancel()
+        pulseAnimator = ObjectAnimator.ofFloat(grantButton, "alpha", 1f, 0.6f, 1f).apply {
+            duration = 1100
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            start()
+        }
+    }
+
+    private fun stopPulse() {
+        pulseAnimator?.cancel()
+        grantButton.alpha = 1f
+    }
+
+    private fun animateProgressTo(target: Int) {
+        ObjectAnimator.ofInt(progressBar, "progress", progressBar.progress, target).apply {
+            duration = 500
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
 
     private fun refreshPermissionUi() {
         if (hasPermission()) {
-            progressBar.progress = 1; progressLabel.text = "1 / 1"
+            animateProgressTo(100)
+            progressLabel.text = "1 / 1"
+            stopPulse()
+            if (!wasGrantedBefore) {
+                wasGrantedBefore = true
+                Toast.makeText(this, "✓ Permission granted", Toast.LENGTH_SHORT).show()
+            }
             permCard.visibility = View.GONE
             if (searchSection.visibility != View.VISIBLE) {
                 searchSection.visibility = View.VISIBLE
@@ -227,9 +262,11 @@ class MainActivity : Activity() {
             }
             if (!autoScanDone) { autoScanDone = true; runFullScan() }
         } else {
-            progressBar.progress = 0; progressLabel.text = "0 / 1"
+            animateProgressTo(0)
+            progressLabel.text = "0 / 1"
             permCard.visibility = View.VISIBLE
             searchSection.visibility = View.GONE
+            startPulse()
         }
     }
 
@@ -291,7 +328,6 @@ class MainActivity : Activity() {
         statusCardSub.text = "Checking device for cheat-related files and apps"
         status.text = ""
         Thread {
-            // Scan installed apps
             val flaggedApps = ArrayList<String>()
             try {
                 val pkgs = packageManager.getInstalledApplications(0)
@@ -304,7 +340,6 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) {}
 
-            // Scan files
             val flaggedFiles = ArrayList<String>()
             val seen = HashSet<String>()
             val stack = ArrayDeque<File>()
