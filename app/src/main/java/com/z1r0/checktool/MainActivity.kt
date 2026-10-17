@@ -34,9 +34,13 @@ class MainActivity : Activity() {
     private lateinit var statusCard: LinearLayout
     private lateinit var statusCardTitle: TextView
     private lateinit var statusCardSub: TextView
+    private lateinit var logoWrap: FrameLayout
     @Volatile private var token = 0
     private val maxResults = 1500
     private var pulseAnimator: ObjectAnimator? = null
+    private var breatheAnimator: ObjectAnimator? = null
+    private var dotsHandler: Handler? = null
+    private var dotsRunnable: Runnable? = null
 
     private val bg = Color.parseColor("#0A0A0A")
     private val card = Color.parseColor("#161616")
@@ -72,7 +76,7 @@ class MainActivity : Activity() {
                 setStroke(3, Color.parseColor("#2A2A2A"))
             }
         }
-        val logoWrap = FrameLayout(this).apply {
+        logoWrap = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(220, 220).apply { gravity = Gravity.CENTER }
         }
         logoWrap.addView(logo, FrameLayout.LayoutParams(220, 220))
@@ -154,7 +158,7 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply { setColor(card); cornerRadius = 28f }
         }
         statusCardTitle = TextView(this).apply {
-            text = "SCANNING..."
+            text = "SCANNING"
             textSize = 24f; setTextColor(Color.WHITE)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -203,15 +207,22 @@ class MainActivity : Activity() {
         searchSection.addView(resultsList)
         root.addView(searchSection)
 
-        val scroll = ScrollView(this).apply { addView(root) }
+        val scroll = ScrollView(this).apply { setBackgroundColor(bg); addView(root) }
         setContentView(scroll)
+        window.decorView.setBackgroundColor(bg)
         refreshPermissionUi()
         startPulse()
+        startBreathe()
     }
 
     override fun onResume() {
         super.onResume()
         refreshPermissionUi()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        dotsHandler?.removeCallbacksAndMessages(null)
     }
 
     private fun hasPermission(): Boolean =
@@ -236,12 +247,41 @@ class MainActivity : Activity() {
         grantButton.alpha = 1f
     }
 
+    private fun startBreathe() {
+        breatheAnimator?.cancel()
+        val sx = ObjectAnimator.ofFloat(logoWrap, "scaleX", 1f, 1.06f, 1f)
+        val sy = ObjectAnimator.ofFloat(logoWrap, "scaleY", 1f, 1.06f, 1f)
+        sx.duration = 2200; sy.duration = 2200
+        sx.repeatCount = ValueAnimator.INFINITE; sy.repeatCount = ValueAnimator.INFINITE
+        sx.interpolator = AccelerateDecelerateInterpolator(); sy.interpolator = AccelerateDecelerateInterpolator()
+        sx.start(); sy.start()
+        breatheAnimator = sx
+    }
+
     private fun animateProgressTo(target: Int) {
         ObjectAnimator.ofInt(progressBar, "progress", progressBar.progress, target).apply {
             duration = 500
             interpolator = AccelerateDecelerateInterpolator()
             start()
         }
+    }
+
+    private fun startScanningDots() {
+        dotsHandler?.removeCallbacksAndMessages(null)
+        dotsHandler = Handler(Looper.getMainLooper())
+        var count = 0
+        dotsRunnable = object : Runnable {
+            override fun run() {
+                count = (count + 1) % 4
+                statusCardTitle.text = "SCANNING" + ".".repeat(count)
+                dotsHandler?.postDelayed(this, 400)
+            }
+        }
+        dotsHandler?.post(dotsRunnable!!)
+    }
+
+    private fun stopScanningDots() {
+        dotsHandler?.removeCallbacksAndMessages(null)
     }
 
     private fun refreshPermissionUi() {
@@ -287,12 +327,14 @@ class MainActivity : Activity() {
         refreshPermissionUi()
     }
 
-    private fun addResultCard(text: String, flagged: Boolean) {
+    private fun addResultCard(text: String, flagged: Boolean, delayMs: Long) {
         val row = TextView(this).apply {
             this.text = text
             setTextColor(if (flagged) warn else Color.WHITE)
             textSize = 13f
             setPadding(24, 20, 24, 20)
+            alpha = 0f
+            translationY = 20f
             background = GradientDrawable().apply {
                 setColor(if (flagged) warnBg else card)
                 cornerRadius = 16f
@@ -301,6 +343,7 @@ class MainActivity : Activity() {
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.setMargins(0, 0, 0, 12)
         resultsList.addView(row, lp)
+        row.animate().alpha(1f).translationY(0f).setStartDelay(delayMs).setDuration(260).start()
     }
 
     private fun addHeader(text: String, color: Int) {
@@ -312,6 +355,8 @@ class MainActivity : Activity() {
     }
 
     private fun setStatusCard(clean: Boolean, count: Int) {
+        stopScanningDots()
+        statusCard.alpha = 0f
         statusCard.background = GradientDrawable().apply {
             setColor(if (clean) okBg else warnBg); cornerRadius = 28f
         }
@@ -319,13 +364,15 @@ class MainActivity : Activity() {
         statusCardTitle.text = if (clean) "✓ CLEAN" else "⚠ FLAGGED ($count)"
         statusCardSub.text = if (clean) "No cheat-related files or apps found"
             else "Suspicious files or apps were detected — review below"
+        statusCard.animate().alpha(1f).setDuration(350).start()
     }
 
     private fun runFullScan() {
         val my = ++token
         resultsList.removeAllViews()
-        statusCardTitle.text = "SCANNING..."
+        statusCardTitle.text = "SCANNING"
         statusCardSub.text = "Checking device for cheat-related files and apps"
+        startScanningDots()
         status.text = ""
         Thread {
             val flaggedApps = ArrayList<String>()
@@ -360,13 +407,14 @@ class MainActivity : Activity() {
                 if (my != token) return@runOnUiThread
                 val total = flaggedApps.size + flaggedFiles.size
                 setStatusCard(total == 0, total)
+                var delay = 0L
                 if (flaggedApps.isNotEmpty()) {
                     addHeader("⚠ SUSPICIOUS APPS (${flaggedApps.size})", warn)
-                    flaggedApps.forEach { addResultCard(it, true) }
+                    flaggedApps.forEach { addResultCard(it, true, delay); delay += 60 }
                 }
                 if (flaggedFiles.isNotEmpty()) {
                     addHeader("⚠ SUSPICIOUS FILES (${flaggedFiles.size})", warn)
-                    flaggedFiles.forEach { addResultCard(it, true) }
+                    flaggedFiles.forEach { addResultCard(it, true, delay); delay += 60 }
                 }
             }
         }.start()
@@ -414,7 +462,8 @@ class MainActivity : Activity() {
                 if (my != token) return@runOnUiThread
                 if (custom.isNotEmpty()) {
                     addHeader("RESULTS (${custom.size})", dim)
-                    custom.forEach { addResultCard(it, false) }
+                    var delay = 0L
+                    custom.forEach { addResultCard(it, false, delay); delay += 50 }
                 }
                 status.text = if (custom.isEmpty()) "No matches found" else "Search complete"
                 resultsBadge.text = "${custom.size}" + if (custom.size >= maxResults) "+" else ""
