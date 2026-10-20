@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var prefs: SharedPreferences
     private var requestListener: ListenerRegistration? = null
     private val auth by lazy { FirebaseAuth.getInstance() }
+    private val db by lazy { FirebaseFirestore.getInstance() }
     @Volatile private var token = 0
     private val maxResults = 1500
     private var pulseAnimator: ObjectAnimator? = null
