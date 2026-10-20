@@ -6,6 +6,7 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ContentResolver
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -19,7 +20,11 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.*
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import java.io.File
+import java.util.UUID
 
 class MainActivity : Activity() {
     private lateinit var input: EditText
@@ -35,6 +40,14 @@ class MainActivity : Activity() {
     private lateinit var statusCardTitle: TextView
     private lateinit var statusCardSub: TextView
     private lateinit var logoWrap: FrameLayout
+    private lateinit var progCard: LinearLayout
+    private lateinit var gateCard: LinearLayout
+    private lateinit var nameInput: EditText
+    private lateinit var requestButton: Button
+    private lateinit var gateStatus: TextView
+    private lateinit var prefs: SharedPreferences
+    private var requestListener: ListenerRegistration? = null
+    private val db by lazy { FirebaseFirestore.getInstance() }
     @Volatile private var token = 0
     private val maxResults = 1500
     private var pulseAnimator: ObjectAnimator? = null
@@ -113,7 +126,48 @@ class MainActivity : Activity() {
             setPadding(0, 8, 0, 36)
         })
 
-        val progCard = LinearLayout(this).apply {
+        gateCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(36, 32, 36, 32)
+            background = glassBg()
+        }
+        gateCard.addView(TextView(this).apply {
+            text = "Request Access"
+            textSize = 17f; setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        gateCard.addView(TextView(this).apply {
+            text = "Enter your name and request approval before scanning"
+            textSize = 13f; setTextColor(dim); setPadding(0, 6, 0, 20)
+        })
+        nameInput = EditText(this).apply {
+            hint = "Your name"
+            setHintTextColor(dim); setTextColor(Color.WHITE)
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            background = glassBg(glassFillSoft, 20f, glassStroke)
+            setPadding(28, 24, 28, 24)
+            setOnEditorActionListener { _, _, _ -> submitAccessRequest(); true }
+        }
+        gateCard.addView(nameInput)
+        gateCard.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 16) })
+        requestButton = Button(this).apply {
+            text = "REQUEST ACCESS"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(accent); cornerRadius = 20f }
+            setOnClickListener { submitAccessRequest() }
+        }
+        gateCard.addView(requestButton)
+        gateStatus = TextView(this).apply {
+            text = ""; textSize = 12f; setTextColor(dim)
+            gravity = Gravity.CENTER
+            setPadding(0, 16, 0, 0)
+        }
+        gateCard.addView(gateStatus)
+        root.addView(gateCard)
+        root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 24) })
+
+        progCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(36, 32, 36, 32)
             background = glassBg()
@@ -136,6 +190,7 @@ class MainActivity : Activity() {
         progCard.addView(progressBar)
         root.addView(progCard)
         root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 24) })
+        progCard.visibility = View.GONE
 
         permCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -160,6 +215,7 @@ class MainActivity : Activity() {
         permCard.addView(grantButton)
         root.addView(permCard)
         root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 28) })
+        permCard.visibility = View.GONE
 
         searchSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE; alpha = 0f }
 
@@ -222,19 +278,44 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { background = backdrop; addView(root) }
         setContentView(scroll)
         window.decorView.setBackgroundColor(bg)
+        startBreathe()
+
+        prefs = getSharedPreferences("checktool_prefs", MODE_PRIVATE)
+        val savedName = prefs.getString("last_name", "")
+        if (!savedName.isNullOrBlank()) nameInput.setText(savedName)
+
+        if (prefs.getBoolean("approved", false)) {
+            unlockMainFlow()
+        } else {
+            gateCard.visibility = View.VISIBLE
+            // Resume watching an already-submitted request (e.g. app was closed while pending).
+            val existingId = prefs.getString("device_id", null)
+            if (existingId != null) {
+                requestButton.isEnabled = false
+                requestButton.text = "WAITING FOR APPROVAL"
+                gateStatus.text = "Waiting for approval..."
+                listenForApproval(existingId)
+            }
+        }
+    }
+
+    private fun unlockMainFlow() {
+        gateCard.visibility = View.GONE
+        progCard.visibility = View.VISIBLE
+        permCard.visibility = View.VISIBLE
         refreshPermissionUi()
         startPulse()
-        startBreathe()
     }
 
     override fun onResume() {
         super.onResume()
-        refreshPermissionUi()
+        if (prefs.getBoolean("approved", false)) refreshPermissionUi()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         dotsHandler?.removeCallbacksAndMessages(null)
+        requestListener?.remove()
     }
 
     private fun hasPermission(): Boolean =
@@ -320,6 +401,71 @@ class MainActivity : Activity() {
             searchSection.visibility = View.GONE
             startPulse()
         }
+    }
+
+    private fun getOrCreateDeviceId(): String {
+        var id = prefs.getString("device_id", null)
+        if (id == null) {
+            id = UUID.randomUUID().toString()
+            prefs.edit().putString("device_id", id).apply()
+        }
+        return id
+    }
+
+    private fun submitAccessRequest() {
+        val name = nameInput.text.toString().trim()
+        if (name.isEmpty()) {
+            Toast.makeText(this, "Enter a name first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        prefs.edit().putString("last_name", name).apply()
+        requestButton.isEnabled = false
+        requestButton.text = "REQUESTING..."
+        gateStatus.setTextColor(dim)
+        gateStatus.text = "Sending request..."
+        val deviceId = getOrCreateDeviceId()
+        val data = hashMapOf(
+            "name" to name,
+            "deviceId" to deviceId,
+            "status" to "pending",
+            "requestedAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        db.collection("requests").document(deviceId).set(data)
+            .addOnSuccessListener { listenForApproval(deviceId) }
+            .addOnFailureListener { e ->
+                requestButton.isEnabled = true
+                requestButton.text = "REQUEST ACCESS"
+                gateStatus.setTextColor(warn)
+                gateStatus.text = "Could not send request: ${e.message}"
+            }
+    }
+
+    private fun listenForApproval(deviceId: String) {
+        requestListener?.remove()
+        requestListener = db.collection("requests").document(deviceId)
+            .addSnapshotListener { snap, err ->
+                if (err != null || snap == null || !snap.exists()) return@addSnapshotListener
+                when (snap.getString("status")) {
+                    "pending" -> {
+                        requestButton.isEnabled = false
+                        requestButton.text = "WAITING FOR APPROVAL"
+                        gateStatus.setTextColor(dim)
+                        gateStatus.text = "Waiting for approval..."
+                    }
+                    "approved" -> {
+                        prefs.edit().putBoolean("approved", true).apply()
+                        requestListener?.remove()
+                        unlockMainFlow()
+                    }
+                    "declined" -> {
+                        requestButton.isEnabled = true
+                        requestButton.text = "REQUEST ACCESS"
+                        gateStatus.setTextColor(warn)
+                        gateStatus.text = "Request declined. You can try again."
+                    }
+                }
+            }
     }
 
     private fun ensurePermission() {
