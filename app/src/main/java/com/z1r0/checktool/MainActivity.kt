@@ -20,6 +20,7 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.*
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -47,7 +48,7 @@ class MainActivity : Activity() {
     private lateinit var gateStatus: TextView
     private lateinit var prefs: SharedPreferences
     private var requestListener: ListenerRegistration? = null
-    private val db by lazy { FirebaseFirestore.getInstance() }
+    private val auth by lazy { FirebaseAuth.getInstance() }
     @Volatile private var token = 0
     private val maxResults = 1500
     private var pulseAnimator: ObjectAnimator? = null
