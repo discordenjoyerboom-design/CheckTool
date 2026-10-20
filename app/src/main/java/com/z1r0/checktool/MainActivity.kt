@@ -414,32 +414,66 @@ class MainActivity : Activity() {
     }
 
     private fun submitAccessRequest() {
-        val name = nameInput.text.toString().trim()
-        if (name.isEmpty()) {
-            Toast.makeText(this, "Enter a name first", Toast.LENGTH_SHORT).show()
-            return
-        }
-        prefs.edit().putString("last_name", name).apply()
-        requestButton.isEnabled = false
-        requestButton.text = "REQUESTING..."
-        gateStatus.setTextColor(dim)
-        gateStatus.text = "Sending request..."
-        val deviceId = getOrCreateDeviceId()
-        val data = hashMapOf(
-            "name" to name,
-            "deviceId" to deviceId,
-            "status" to "pending",
-            "requestedAt" to FieldValue.serverTimestamp(),
-            "updatedAt" to FieldValue.serverTimestamp()
-        )
-        db.collection("requests").document(deviceId).set(data)
-            .addOnSuccessListener { listenForApproval(deviceId) }
-            .addOnFailureListener { e ->
+    val name = nameInput.text.toString().trim()
+
+    if (name.isEmpty()) {
+        Toast.makeText(
+            this,
+            "Enter a name first",
+            Toast.LENGTH_SHORT
+        ).show()
+        return
+    }
+
+    requestButton.isEnabled = false
+    requestButton.text = "REQUESTING..."
+    gateStatus.setTextColor(dim)
+    gateStatus.text = "Sending request..."
+
+    auth.signInAnonymously()
+        .addOnSuccessListener { result ->
+            val user = result.user
+
+            if (user == null) {
                 requestButton.isEnabled = true
                 requestButton.text = "REQUEST ACCESS"
-                gateStatus.setTextColor(warn)
-                gateStatus.text = "Could not send request: ${e.message}"
+                gateStatus.text = "Authentication failed."
+                return@addOnSuccessListener
             }
+
+            val uid = user.uid
+
+            val data = hashMapOf(
+                "name" to name,
+                "uid" to uid,
+                "status" to "pending",
+                "requestedAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+
+            db.collection("requests")
+                .document(uid)
+                .set(data)
+                .addOnSuccessListener {
+                    prefs.edit()
+                        .putString("last_name", name)
+                        .apply()
+
+                    listenForApproval(uid)
+                }
+                .addOnFailureListener { e ->
+                    requestButton.isEnabled = true
+                    requestButton.text = "REQUEST ACCESS"
+                    gateStatus.text =
+                        "Could not send request: ${e.message}"
+                }
+        }
+        .addOnFailureListener { e ->
+            requestButton.isEnabled = true
+            requestButton.text = "REQUEST ACCESS"
+            gateStatus.text =
+                "Sign-in failed: ${e.message}"
+        }
     }
 
     private fun listenForApproval(deviceId: String) {
