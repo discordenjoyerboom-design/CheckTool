@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "707402997471",
+    "project_id": "checktool-a9bb5",
+    "storage_bucket": "checktool-a9bb5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:707402997471:android:3dcbd865baa5cbfc09136a",
+        "android_client_info": {
+          "package_name": "com.z1r0.checktool"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8s3cwmSEEh82SUuQZacSt4j3gizQIJ08"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
