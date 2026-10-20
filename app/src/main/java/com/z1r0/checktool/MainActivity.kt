@@ -678,5 +678,125 @@ class MainActivity : Activity() {
                 resultsBadge.visibility = View.VISIBLE
             }
         }.start()
+        private fun openAdminScreen() {
+        if (auth.currentUser?.uid != "r20Vp2EFxjO2Ag8WQNijbs61Vs93") {
+            Toast.makeText(this, "Admin access only", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(Color.rgb(15, 15, 20))
+        }
+
+        layout.addView(TextView(this).apply {
+            text = "ACCESS REQUESTS"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+        })
+
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        layout.addView(list)
+
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Admin Panel")
+            .setView(ScrollView(this).apply { addView(layout) })
+            .setNegativeButton("Close", null)
+            .create()
+
+        db.collection("requests")
+            .whereEqualTo("status", "pending")
+            .get()
+            .addOnSuccessListener { documents ->
+                list.removeAllViews()
+
+                if (documents.isEmpty) {
+                    list.addView(TextView(this).apply {
+                        text = "No pending requests."
+                        setTextColor(Color.WHITE)
+                    })
+                }
+
+                for (document in documents) {
+                    val name = document.getString("name") ?: "Unknown"
+                    val uid = document.id
+
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(0, 24, 0, 24)
+                    }
+
+                    row.addView(TextView(this).apply {
+                        text = "$name\nUID: $uid"
+                        setTextColor(Color.WHITE)
+                        textSize = 14f
+                    })
+
+                    row.addView(Button(this).apply {
+                        text = "APPROVE"
+                        setOnClickListener {
+                            document.reference.update(
+                                mapOf(
+                                    "status" to "approved",
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).addOnSuccessListener {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "$name approved!",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                list.removeView(row)
+                            }.addOnFailureListener { e ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Approval failed: ${e.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    })
+
+                    row.addView(Button(this).apply {
+                        text = "REJECT"
+                        setOnClickListener {
+                            document.reference.update(
+                                mapOf(
+                                    "status" to "declined",
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).addOnSuccessListener {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "$name rejected",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                list.removeView(row)
+                            }.addOnFailureListener { e ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Rejection failed: ${e.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    })
+
+                    list.addView(row)
+                }
+            }
+            .addOnFailureListener { e ->
+                Toast.makeText(
+                    this,
+                    "Could not load requests: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+
+        dialog.show()
+        }
     }
 }
